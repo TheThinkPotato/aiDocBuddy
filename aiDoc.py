@@ -8,14 +8,29 @@ from chromadb import PersistentClient
 from chromadb.utils import embedding_functions
 
 # Setup your reasoning model, e.g., "llama3", "mistral", "deepseek-r1"
-REASONING_MODEL = "deepseek-r1"
+# For faster responses, use: "llama3", "mistral", "qwen2.5"
+# For reasoning models (slower but more thorough): "deepseek-r1", "o1-mini", "o1-preview"
+REASONING_MODEL = "deepseek-r1"  # Change to "llama3" for faster responses
 EMBEDDING_MODEL = "mxbai-embed-large"
+
+# Configuration for response limits
+MAX_TOKENS = 2000        # Maximum tokens in response
+TIMEOUT_SECONDS = 300     # Maximum time to wait for response
+TEMPERATURE = 0.7        # Lower = more focused, Higher = more creative
 
 # 1. Load PDFs
 if len(sys.argv) < 2:
     print("Error: No PDF file(s) provided.")
     print("Usage: python aiDoc.py <path_to_pdf1> [path_to_pdf2] [path_to_pdf3] ...")
+    print("Optional: Add '--fast' flag to use a faster model (llama3 instead of deepseek-r1)")
     sys.exit(1)
+
+# Check for --fast flag
+use_fast_model = "--fast" in sys.argv
+if use_fast_model:
+    REASONING_MODEL = "llama3"
+    print("Using fast model (llama3) for quicker responses")
+    sys.argv.remove("--fast")  # Remove the flag from arguments
 
 input_pdfs = sys.argv[1:]
 all_documents = []
@@ -66,7 +81,7 @@ for doc_idx, document in enumerate(all_documents):
 print(f"Created {len(all_chunks)} chunks from {len(all_documents)} document(s)")
 
 # 3. Setup Chroma + embedding
-client = PersistentClient(path="./chroma_db")
+client = PersistentClient(path="./chroma_db/" + input_pdfs[0].split('/')[-1].split('\\')[-1])
 embedding_func = embedding_functions.OllamaEmbeddingFunction(model_name=EMBEDDING_MODEL)
 collection = client.get_or_create_collection(name="pdf_docs", embedding_function=embedding_func)
 
@@ -107,15 +122,36 @@ while True:
     
     context = "\n\n".join(context_parts)
     prompt = f"Answer the question based on the following context from multiple documents:\n{context}\n\nQuestion: {question}"
-    response = ollama.chat(model=REASONING_MODEL, messages=[{"role": "user", "content": prompt}])
+    # Add timeout and other parameters to limit thinking time
+    response = ollama.chat(
+        model=REASONING_MODEL, 
+        messages=[
+            {"role": "system", "content": "You are a helpful assistant. Provide concise, direct answers based on the given context. Keep your reasoning brief and focus on the most relevant information."},
+            {"role": "user", "content": prompt}
+        ],
+        options={
+            "temperature": TEMPERATURE,
+            "top_p": 0.9,
+            "max_tokens": MAX_TOKENS,  # Limit response length
+            "timeout": TIMEOUT_SECONDS,  # Timeout in seconds
+            "num_predict": MAX_TOKENS  # Maximum tokens to generate
+        }
+    )
 
     print("\n-------------------------------------------------------------------------")
     print("Q:", question)
     print(f"Sources: {', '.join(sorted(source_files))}")
     print("-------------------------------------------------------------------------\n")
     print(response["message"]["content"])
-    key =  input("\n\nPress (Enter) to continue or (q) to quit...")
+    key =  input("\n\nPress (Enter) to continue, (f) for fast llm or (t) for thinking llm or (q) to quit...")
     if(key == 'q'):
         sys.exit()
+    if(key == 'f'):
+        REASONING_MODEL = "llama3"
+        print("Using fast model (llama3) for quicker responses")
+    if(key == 't'):
+        REASONING_MODEL = "deepseek-r1"
+        print("Using thinking model (deepseek-r1) for more thorough responses")
+
 
 
